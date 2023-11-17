@@ -1,0 +1,27 @@
+This Python script, leveraging pandas, matplotlib, and the geopy library, focuses on analyzing and visualizing GPS data. 
+
+The key functionalities include:
+
+Data Loading and Cleaning:
+The script loads GPS data from an Excel file, cleaning the dataset by removing rows with missing or invalid coordinates.
+The 'Time' column is converted to datetime objects and the data is sorted by time for better analysis.
+
+Distance Calculation:
+The script defines two reference points (Point 1 and Point 2) with specified coordinates.
+Functions are created to calculate the distance between each GPS data point and these reference points using geodesic distance.
+
+Time and Distance Analysis:
+The script identifies the times corresponding to the two points based on calculated distances.
+It calculates the distance between Point 1 and Point 2.
+
+Visualization:
+The GPS data is visualized over time, showing the distances of each data point to Point 1 and Point 2.
+Vertical dashed lines indicate the times corresponding to Point 1 and Point 2.
+The script provides a legend for clarity and labels for axes and plot title.
+Additional information, such as the distance between Point 1 and Point 2, is displayed on the plot.
+
+Result Display:
+The script prints the times of Point 1 and Point 2 and the calculated distance between the two points.
+
+Usage:
+This script is designed to be flexible for different datasets and reference points. It offers a valuable tool for researchers and analysts working with GPS data to analyze distances over time.
