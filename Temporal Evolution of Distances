@@ -1,27 +1,77 @@
-This Python script, leveraging pandas, matplotlib, and the geopy library, focuses on analyzing and visualizing GPS data. 
-
-The key functionalities include:
-
-Data Loading and Cleaning:
-The script loads GPS data from an Excel file, cleaning the dataset by removing rows with missing or invalid coordinates.
-The 'Time' column is converted to datetime objects and the data is sorted by time for better analysis.
-
-Distance Calculation:
-The script defines two reference points (Point 1 and Point 2) with specified coordinates.
-Functions are created to calculate the distance between each GPS data point and these reference points using geodesic distance.
-
-Time and Distance Analysis:
-The script identifies the times corresponding to the two points based on calculated distances.
-It calculates the distance between Point 1 and Point 2.
-
-Visualization:
-The GPS data is visualized over time, showing the distances of each data point to Point 1 and Point 2.
-Vertical dashed lines indicate the times corresponding to Point 1 and Point 2.
-The script provides a legend for clarity and labels for axes and plot title.
-Additional information, such as the distance between Point 1 and Point 2, is displayed on the plot.
-
-Result Display:
-The script prints the times of Point 1 and Point 2 and the calculated distance between the two points.
-
-Usage:
-This script is designed to be flexible for different datasets and reference points. It offers a valuable tool for researchers and analysts working with GPS data to analyze distances over time.
+import pandas as pd
+import matplotlib . pyplot as plt
+from geopy . distance import geodesic
+71
+# Load GPS data from the Excel file
+file_path = ’C:/ ntnu / thesis / Results / dataset4 - new . xlsx ’
+gps_df = pd . read_excel ( file_path )
+# Data Cleaning : Remove rows with missing or invalid coordinates
+gps_df [’Latitude ’] = pd . to_numeric ( gps_df [’Latitude ’], errors =’
+coerce ’)
+gps_df [’Longitude ’] = pd . to_numeric ( gps_df [’Longitude ’], errors =’
+coerce ’)
+gps_df . dropna ( subset =[’Latitude ’, ’Longitude ’], inplace = True )
+# Convert the ’Time ’ column to datetime objects and sort by time
+gps_df [’Time ’] = pd . to_datetime ( gps_df [’Time ’], format =’%H:%M:%S’,
+errors =’coerce ’)
+gps_df . sort_values ( by=’Time ’, inplace = True )
+# Define the coordinates of the two points
+point1 = ( 63 . 438401 , 9 . 528145 ) # Coordinates of the first point
+point2 = ( 63 . 437652 , 9 . 525652 ) # Coordinates of the second point
+# Function to calculate distance between two GPS points
+def calculate_distance ( row ):
+gps_point = ( row [’Latitude ’], row [’Longitude ’])
+return geodesic ( point1 , gps_point ) . kilometers
+# Calculate distances for each GPS data point to Point 1
+gps_df [’ Distance_Point1 ’] = gps_df . apply ( calculate_distance , axis =
+1)
+# Function to calculate distance to Point 2
+def calculate_distance_to_point2 ( row ):
+gps_point = ( row [’Latitude ’], row [’Longitude ’])
+return geodesic ( point2 , gps_point ) . kilometers
+# Calculate distances for each GPS data point to Point 2
+gps_df [’ Distance_Point2 ’] = gps_df . apply (
+calculate_distance_to_point2 ,
+axis =1)
+# Find the times corresponding to the two points based on
+distances
+time_of_point1 = gps_df [ gps_df [’ Distance_Point1 ’] == gps_df [’
+Distance_Point1 ’]. min ()][’Time ’].
+iloc [0]
+time_of_point2 = gps_df [ gps_df [’ Distance_Point2 ’] == gps_df [’
+Distance_Point2 ’]. min ()][’Time ’].
+iloc [0]
+# Calculate the distance between Point 1 and Point 2
+distance_between_points = geodesic ( point1 , point2 ) . kilometers
+# Plot GPS data
+plt . figure ( figsize =( 12 , 6 ) )
+plt . plot ( gps_df [’Time ’], gps_df [’ Distance_Point1 ’], label =’
+Distance to Point 1’, color =’blue
+’)
+plt . plot ( gps_df [’Time ’], gps_df [’ Distance_Point2 ’], label =’
+Distance to Point 2’, color =’
+72
+green ’)
+plt . axvline ( time_of_point1 , color =’red ’, linestyle =’--’, label =’
+Time of Point 1’)
+plt . axvline ( time_of_point2 , color =’orange ’, linestyle =’--’, label =
+’Time of Point 2’)
+plt . title (’Distance to Points Over Time ’)
+plt . xlabel (’Time ’)
+plt . ylabel (’Distance ( kilometers )’)
+plt . legend ()
+plt . grid ( True )
+plt . xticks ( rotation =45 )
+plt . text ( time_of_point1 , gps_df [’ Distance_Point1 ’]. max () , f’
+Distance 1-2: {
+distance_between_points :. 2f} km ’,
+color =’purple ’)
+# Show the plot
+plt . legend ()
+plt . show ()
+# Print the times and distances
+print (f" Time of Point 1: { time_of_point1 }")
+print (f" Time of Point 2: { time_of_point2 }")
+print (f" Distance between Point 1 and Point 2: {
+distance_between_points :. 2f}
+kilometers ")
