@@ -1,0 +1,324 @@
+ import pandas as pd
+ import matplotlib.pyplot as plt
+ from scipy import stats
+ from scipy.interpolate import interp1d
+ import geopandas as gpd
+ import contextily as ctx
+ from matplotlib.colors import Normalize
+ from matplotlib import cm
+ import numpy as np
+ from shapely.geometry import LineString
+ import pyIGRF
+ import time
+ from datetime import datetime
+ from mpl_toolkits.mplot3d import Axes3D
+ from shapely.geometry import Point
+ import pyproj
+ from pyproj import Transformer
+ from pyproj import Proj, transform
+ from owslib.wms import WebMapService
+ from matplotlib.cm import ScalarMappable
+
+ # Define Functions
+ def timetosecond(n):
+ n = int(n)
+ hr, remainder = divmod(n, 10000)
+ minute, sec = divmod(remainder, 100)
+ return hr * 3600 + minute * 60 + sec
+
+ def time_to_datetime(timebase):
+ time_str = str(timebase).zfill(6)
+ time_obj = datetime.strptime(time_str, ’%H%M%S’).time()
+ date_obj = datetime(2023, 8, 18)
+ return datetime.combine(date_obj, time_obj)
+
+ def calculate_igrf(date, latitude, longitude, altitude=0):
+ if not isinstance(date, datetime):
+ raise ValueError(f"Expected datetime, got {type(date)}")
+ year = date.year + (date.month- 1) / 12 + (date.day- 1) /365.25
+igrf_result = pyIGRF.igrf_value(latitude, longitude, altitude, year)
+ return igrf_result[-1]
+
+ # Load Datasets
+ F_path = ’C:/ntnu/thesis/Second Time/DATASET4/magnetic_field_data.xlsx’
+ Base_path = ’C:/ntnu/thesis/base data.xlsx’
+ GPS_path = ’C:/ntnu/thesis/Second Time/DATASET4/gps_location_data4.xlsx’
+ Base_data = pd.read_excel(Base_path)
+ F_data = pd.read_excel(F_path)
+ GPS_data = pd.read_excel(GPS_path)
+ Output= ’C:/ntnu/thesis/Second Time/DATASET4/Output.xlsx’
+ Output2=’C:/ntnu/thesis/Second Time/DATASET4/Output2.xlsx’
+
+ # Time Converting
+ F_data[’Time’] = F_data[’Time’].fillna(method=’ffill’).astype(int)
+
+ # Convert ’Time’ to string and ensure it’s in ’HHMMSS’ format
+ F_data[’Time’] = F_data[’Time’].astype(str).str.zfill(6)
+ Base_data[’timebase’] = Base_data[’timebase’].apply(time_to_datetime)
+ F_data[’datetime’] = F_data[’Time’].apply(time_to_datetime)
+ GPS_data[’datetime’] = GPS_data[’Time’].apply(time_to_datetime)
+
+ #interpolating to find missing data
+ F_data[’datetime’] = pd.to_datetime(F_data[’Time’], format=’%H%M%S’)
+ F_data.set_index(’datetime’, inplace=True)
+ F_data_resampled = F_data.resample(’S’).mean().interpolate(method=’linear’, limit_direction=’both’)
+ F_data_resampled.to_excel(Output2)
+
+ #Interpolating Base data in magnetic field data
+ base_timestamps = Base_data[’timebase’].apply(lambda dt: dt.timestamp())
+ f_timestamps = F_data[’datetime’].apply(lambda dt: dt.timestamp())
+ Ynew = np.interp(f_timestamps, base_timestamps, Base_data[’magneticfield’])
+ F_data[’Interpolated_Magnetic_Field’] = Ynew
+
+ #Merge GPS data with Magnetic field Data
+ F_data = F_data.sort_values(by=’datetime’)
+ GPS_data = GPS_data.sort_values(by=’datetime’)
+ F_data = pd.merge_asof(F_data, GPS_data[[’datetime’, ’Latitude’, ’Longitude’]], on=’datetime’, direction=’nearest’)
+
+ #Calculating IGRF
+ F_data[’IGRF_F’] = F_data.apply(lambda row: calculate_igrf(row[’datetime’], row[’Latitude’], row[’Longitude’]), axis=1)
+ F_data[’variation’] = F_data[’IGRF_F’]- Ynew
+ 
+# Remove outliers from Original Magnetic Field
+ Q1 = F_data[’Magnetic_Field’].quantile(0.25)
+ Q3 = F_data[’Magnetic_Field’].quantile(0.75)
+ IQR = Q3- Q1
+ lower_bound = Q1- 1.5 * IQR
+ upper_bound = Q3 + 1.5 * IQR
+ F_data = F_data[(F_data[’Magnetic_Field’] >= lower_bound) & (F_data[’Magnetic_Field’] <=upper_bound)]
+
+ #Plot Original Magnetic field in Time
+ Time_for_plot = np.array([timetosecond(n) for n in F_data[’Time’]])
+ plt.figure(figsize=(10, 6))
+ plt.plot(Time_for_plot, F_data[’Magnetic_Field’], label=’MagneticFiled Over Time’, color=’blue’, linewidth=1)
+ plt.title(’Original Magnetic Field Variation Over Time’, fontsize=16)
+ plt.xlabel(’Time(Seconds)’, fontsize=14)
+ plt.ylabel(’Magnetic Field (nT)’, fontsize=14)
+ plt.grid(True)
+ plt.legend()
+ plt.xticks(rotation=45)
+ plt.tight_layout()
+ plt.show()
+
+ #Correcting Magnetic Filed
+ F_data[’Magnetic_Field_Corrected’]=F_data[’Magnetic_Field’]F_data[’IGRF_F’]- F_data[’variation’]
+ F_data[’Time_for_plot’] = Time_for_plot
+ output_df = F_data[[’Time_for_plot’,’IGRF_F’, ’Interpolated_Magnetic_Field’, ’
+ variation’, ’Magnetic_Field_Corrected’]]
+ output_df.to_excel(Output, index=False)
+ F_data = F_data[(F_data[’Magnetic_Field_Corrected’] >-410) & (F_data[’Magnetic_Field_Corrected’] <-150)]
+ Time_for_plot = np.array([timetosecond(n) for n in F_data[’Time’]])
+
+ # Plot Corrected Magnetic Field Over Time
+ plt.figure(figsize=(10, 6))
+ plt.plot(Time_for_plot, F_data[’Magnetic_Field_Corrected’], label=’Magnetic Field Corrected (Subtract IGRF)’, color=’blue’,linewidth=1)
+ plt.title(’Corrected Magnetic Field Over Time’, fontsize=16)
+ plt.xlabel(’Time(Seconds)’, fontsize=14)
+ plt.ylabel(’Magnetic Field (nT)’, fontsize=14)
+ plt.grid(True)
+ plt.legend()
+ plt.xticks(rotation=45)
+ plt.tight_layout()
+ plt.show()
+
+ #Smoothing Data
+ window_size = 100
+ F_data[’Magnetic_Field_Corrected_Smoothed’] = F_data[’Magnetic_Field_Corrected’].
+ rolling(window=window_size).mean()
+
+ # Plot Corrected Smoothed Magnetic Field Over Time
+ plt.figure(figsize=(10, 6))
+ plt.plot(Time_for_plot, F_data[’Magnetic_Field_Corrected_Smoothed’], label=’Smoothed CorrectedMagnetic Field’, color=’blue’,linewidth=1)
+ plt.title(’Smoothed Corrected Magnetic Field Over Time’, fontsize=16)
+ plt.xlabel(’Time(Seconds)’, fontsize=14)
+ plt.ylabel(’Magnetic Field (nT)’, fontsize=14)
+ plt.grid(True)
+ plt.legend()
+ plt.xticks(rotation=45)
+ plt.tight_layout()
+ plt.show()
+
+ # Calculate the absolute difference between each point and its predecessor
+ F_data[’Magnetic_Field_Diff’] = F_data[’Magnetic_Field_Corrected’].diff().abs()
+ threshold = F_data[’Magnetic_Field_Diff’].std() * 3
+ sharp_peaks_times = F_data[F_data[’Magnetic_Field_Diff’] >threshold][’datetime’]
+ print(sharp_peaks_times)
+
+ # Correcting magnetic field data
+ F_data[’z_score’] = stats.zscore(F_data[’Magnetic_Field’])
+ F_data_clean = F_data[F_data[’z_score’].abs() <= 3]
+ F_data_clean[’correctionF’] = F_data_clean[’Magnetic_Field’]-F_data[’IGRF_F’]- F_data[’variation’]
+ print("Data type of ’Time’:", F_data_clean[’Time’].dtype)
+ if F_data_clean[’Time’].dtype == ’object’:
+ F_data_clean[’Time’] = pd.to_numeric(F_data_clean[’Time’], errors=’coerce’)
+ print("Number of NaNs after conversion:", F_data_clean[’Time’].isna().sum())
+ F_data_clean[’Time’] = F_data_clean[’Time’].astype(float)
+ F_data[’Time_in_seconds’] = [timetosecond(time) for time in F_data[’Time’]]
+
+ # Load the GPS dataset
+ GPS_data = pd.read_excel(GPS_path)
+ def remove_outliers(df, columns):
+ for column_name in columns:
+ Q1 = df[column_name].quantile(0.25)
+ Q3 = df[column_name].quantile(0.75)
+ IQR = Q3- Q1
+ lower_bound = Q1- 1.5 * IQR
+ upper_bound = Q3 + 1.5 * IQR
+ df = df[(df[column_name] >= lower_bound) & (df[column_name] <= upper_bound)]
+ return df
+
+ # Removing outliers
+ columns_to_clean = [’Latitude’, ’Longitude’, ’Altitude’]
+ GPS_data_cleaned = remove_outliers(GPS_data, columns_to_clean)
+ longitude_data = GPS_data_cleaned[’Longitude’]
+ latitude_data = GPS_data_cleaned[’Latitude’]
+ altitude_data = GPS_data_cleaned[’Altitude’]
+
+ # Convert time for plotting
+ GPS_time=np.array([timetosecond(n) for n in GPS_data_cleaned[’Time’]])
+ plt.figure(figsize=(15, 15))
+
+ # Plotting Latitude
+ plt.subplot(3, 1, 1)
+ plt.plot(GPS_time, GPS_data_cleaned[’Latitude’], label=’Latitude’,color=’blue’)
+ plt.xlabel(’Time(seconds)’, fontsize=14)
+ plt.ylabel(’Latitude(degrees)’, fontsize=14)
+ plt.title(’Latitude Variation Over Time’, fontsize=16)
+ plt.legend()
+ plt.grid(True)
+
+ # Plotting Longitude
+ plt.subplot(3, 1, 2)
+ plt.plot(GPS_time, GPS_data_cleaned[’Longitude’], label=’Longitude’, color=’green’)
+ plt.xlabel(’Time(seconds)’, fontsize=14)
+ plt.ylabel(’Longitude(degrees)’, fontsize=14)
+ plt.title(’Longitude Variation Over Time’, fontsize=16)
+ plt.legend()
+ plt.grid(True)
+ 
+# Plotting Altitude
+ plt.subplot(3, 1, 3)
+ plt.plot(GPS_time, GPS_data_cleaned[’Altitude’], label=’Altitude’,color=’red’)
+ plt.xlabel(’Time(seconds)’, fontsize=14)
+ plt.ylabel(’Altitude(meters)’, fontsize=14)
+ plt.title(’Altitude Variation Over Time’, fontsize=16)
+ plt.legend()
+ plt.grid(True)
+ plt.tight_layout()
+ plt.show()
+ interp_latitude = interp1d(GPS_data_cleaned[’Time’],GPS_data_cleaned[’Latitude’],kind=’linear’, fill_value="extrapolate")
+ interp_longitude = interp1d(GPS_data_cleaned[’Time’],GPS_data_cleaned[’Longitude’],kind=’linear’, fill_value="extrapolate")
+ interp_Altitude = interp1d(GPS_data_cleaned[’Time’],GPS_data_cleaned[’Altitude’],kind=’linear’, fill_value="extrapolate")
+
+ # Apply the interpolation to create the new columns on theDataFrame that has the ’Time’column
+ # This should be the DataFrame with magnetic field data sampled every 0.2 seconds.
+ F_data_clean[’Interp_Latitude’] = interp_latitude(F_data_clean[’Time’])
+ F_data_clean[’Interp_Longitude’] = interp_longitude(F_data_clean[’Time’])
+ F_data_clean[’Interp_Altitude’] = interp_Altitude(F_data_clean[’Time’])
+
+ # 3D plot
+ fig = plt.figure(figsize=(10, 7))
+ ax = fig.add_subplot(111, projection=’3d’)
+ sc = ax.scatter(F_data_clean[’Interp_Latitude’], F_data_clean[’Interp_Longitude’], F_data_clean[’Interp_Altitude’], c=F_data_clean[’correctionF’], cmap=’viridis’)
+ ax.set_xlabel(’Latitude(degrees)’, fontsize=14)
+ ax.set_ylabel(’Longitude(degrees)’, fontsize=14)
+ ax.set_zlabel(’Altitude(meters)’, fontsize=14)
+ cbar = fig.colorbar(sc, ax=ax, shrink=0.5, aspect=5)
+ cbar.set_label(’Corrected Magnetic Field (nT)’, fontsize=14)
+ plt.title(’3D Plot of Corrected Magnetic Field Variation Over GPS Coordinates’, fontsize=16)
+ plt.show()
+
+ #2D plot
+ plt.figure(figsize=(12, 6))
+ scatter = plt.scatter(F_data_clean[’Interp_Longitude’],F_data_clean[’Interp_Latitude’],c=F_data_clean[’correctionF’],cmap=’viridis’)
+ cbar = plt.colorbar(scatter)
+ cbar.set_label(’Magnetic Field Intensity(nT)’, fontsize=14)
+ plt.xlabel(’Longitude(degrees)’, fontsize=14)
+ plt.ylabel(’Latitude(degrees)’, fontsize=14)
+ plt.title(’Interpolated Magnetic Field Intensity Map’, fontsize=16)
+ plt.legend()
+ plt.show()
+
+ # Plot data on geographical map
+ gdf = gpd.GeoDataFrame(F_data_clean,geometry=gpd.points_from_xy(F_data_clean[’Interp_Longitude’],F_data_clean[’Interp_Latitude’]))
+ gdf.crs = "EPSG:4326"
+ gdf = gdf.to_crs(epsg=3857)
+ min_magnetic_field =-350
+ max_magnetic_field =-200
+ norm = Normalize(vmin=min_magnetic_field, vmax=max_magnetic_field)
+ cmap = cm.viridis
+ fig, ax = plt.subplots(figsize=(10, 10))
+ scatter = ax.scatter(gdf.geometry.x, gdf.geometry.y, c=gdf[’correctionF’], cmap=’viridis’,norm=Normalize(vmin=-350, vmax200), s=100) # Fixed size for visibility
+ try:
+ ctx.add_basemap(ax, crs=gdf.crs.to_string(), source=ctx.providers.OpenStreetMap.except Exception as e:Mapnik, zoom="auto")
+ print("Failed to load base map:", e)
+
+ax.set_aspect(’equal’)
+ plt.tight_layout()
+ cbar = fig.colorbar(ScalarMappable(norm=Normalize(vmin=-350, vmax=-200), cmap=’viridis’), ax=ax, orientation=’vertical’, shrink=1)
+ cbar.set_label(’Magnetic Field Intensity (nT)’, fontsize=14)
+ plt.title(’Geographical Map with Path and Magnetic Field Intensity’, fontsize=16)
+ plt.xlabel(’Longitude(degrees)’, fontsize=14)
+ plt.ylabel(’Latitude(degrees)’, fontsize=14)
+ plt.show()
+
+ # Export the DataFrame to an Excel file
+ all_data = pd.DataFrame({’Time’: F_data_clean[’Time’],
+ ’Time_in_Seconds’:F_data[’Time_in_seconds’],
+ ’Original Magnetic Field’: F_data[’Magnetic_Field’],
+ ’IGRF Magnetic Field’: F_data[’IGRF_F’],
+ ’Magnetic Field Variation’: F_data[’variation’],
+ ’Z-Score’: F_data[’z_score’],
+ ’Corrected Magnetic Field’: F_data_clean[’correctionF’],
+ ’Interpolated Latitude’: F_data_clean[’Interp_Latitude’],
+ ’Interpolated Longitude’: F_data_clean[’Interp_Longitude’],
+ ’Interpolated Altitude’: F_data_clean[’Interp_Altitude’] #Include this only if you have altitude data})
+ all_data.to_excel(’combined_data.xlsx’, index=False)
+
+ #comparative plots
+ GPS_data[’Time_in_seconds’] = GPS_data[’Time’].apply(timetosecond)filtered_GPS_data1 = GPS_data[(GPS_data[’Time_in_seconds’] >=56700) & (GPS_data[’Time_in_seconds’] <= 57000)]
+ merged_data1 = pd.merge(filtered_GPS_data1, F_data_clean, on=’Time’, how=’inner’)
+ print("Columns in merged_data1:", merged_data1.columns)
+ gdf = gpd.GeoDataFrame(merged_data1,geometry=gpd.points_from_xy(merged_data1.Longitude_x,merged_data1.Latitude_x))
+ gdf.set_crs(epsg=4326, inplace=True)
+ gdf = gdf.to_crs(epsg=3857)
+ norm = Normalize(vmin=merged_data1[’Magnetic_Field_Corrected’].min(), vmax=merged_data1[’Magnetic_Field_Corrected’].max())
+ cmap = cm.viridis # You can change the colormap to something else if you prefer
+ fig, ax = plt.subplots(figsize=(10, 10))
+ scatter = ax.scatter(gdf.geometry.x, gdf.geometry.y, c=gdf[’correctionF’], cmap=’viridis’,norm=Normalize(vmin=-350, vmax=200), s=100) # Fixed size forvisibility
+ try:
+ ctx.add_basemap(ax, crs=gdf.crs.to_string(), source=ctx.providers.OpenStreetMap.Mapnik, zoom="auto")
+ except Exception as e:
+ print("Failed to load base map:", e)
+ ax.set_aspect(’equal’)
+ plt.tight_layout()
+ cbar = fig.colorbar(ScalarMappable(norm=Normalize(vmin=-350, vmax=-200), cmap=’viridis’), ax=ax, orientation=’vertical’, shrink=0.6)
+ cbar.set_label(’Magnetic Field Intensity (nT)’, fontsize=14)
+ plt.title(’Magnetic Field Intensity_First Survey (Time Interval:56700s to 57000s)’, fontsize=16)
+ plt.xlabel(’Longitude(degrees)’, fontsize=14)
+ plt.ylabel(’Latitude(degrees)’, fontsize=14)
+ plt.show()
+
+ filtered_GPS_data2= GPS_data[(GPS_data[’Time_in_seconds’] >= 57000) & (GPS_data[’Time_in_seconds’]<= 57400)]
+
+ # Merge GPS data with Magnetic field data on time
+ merged_data2 = pd.merge(filtered_GPS_data2, F_data_clean, on=’Time’, how=’inner’)
+ gdf = gpd.GeoDataFrame(merged_data2,geometry=gpd.points_from_xy(merged_data2.Longitude_x,merged_data2.Latitude_x))
+ gdf.set_crs(epsg=4326, inplace=True)
+ gdf = gdf.to_crs(epsg=3857)
+ norm = Normalize(vmin=merged_data2[’Magnetic_Field_Corrected’].min(), vmax=merged_data2[’Magnetic_Field_Corrected’].max())
+ cmap = cm.viridis # You can change the colormap to something else if you prefer
+ fig, ax = plt.subplots(figsize=(10, 10))
+ scatter = ax.scatter(gdf.geometry.x, gdf.geometry.y, c=gdf[’correctionF’], cmap=’viridis’,norm=Normalize(vmin=-350, vmax=200), s=100) # Fixed size for visibility
+ try:
+ ctx.add_basemap(ax, crs=gdf.crs.to_string(), source=ctx.providers.OpenStreetMap.Mapnik, zoom="auto")
+ except Exception as e:
+ print("Failed to load base map:", e)
+ ax.set_aspect(’equal’)
+ plt.tight_layout()
+ cbar = fig.colorbar(ScalarMappable(norm=Normalize(vmin=-350, vmax=-200), cmap=’viridis’), ax=ax, orientation=’vertical’, shrink=0.6)
+ cbar.set_label(’Magnetic Field Intensity (nT)’, fontsize=14)
+ plt.title(’Magnetic Field Intensity_Second Survey (Time Interval:57000s to 57400s)’, fontsize=16)
+ plt.xlabel(’Longitude(degrees)’, fontsize=14)
+ plt.ylabel(’Latitude(degrees)’, fontsize=14)
+ plt.show()
